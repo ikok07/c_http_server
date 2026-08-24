@@ -27,7 +27,13 @@ typedef struct {
     char value[MAX_HEADER_VALUE];
 } http_header_t;
 
+#define HTTP_REQ_FLAG_HEADERS_COMPLETE              (1UL << 0)      // Indicates that the headers part is handled
+#define HTTP_REQ_FLAG_BODY_INCOMPLETE               (1UL << 1)      // Indicates that there is still body data to be received
+
 typedef struct {
+    uint8_t flags;
+    char *temp;                 // Used to store temp data. It is set to NULL when its not used
+    size_t temp_len;
     http_method_t method;
     char *uri;
     http_version_t version;

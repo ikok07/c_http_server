@@ -1,155 +1,137 @@
 //
-// Created by Kok on 8/23/26.
+// Created by Kok on 8/24/26.
 //
 
 #include "server.h"
 
 #include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <string.h>
 #include <sys/errno.h>
-#include <fcntl.h>
-#include <arpa/inet.h>
 
-static void _poll_socket(server_handle_t *hserver);
-static void _add_connection(int fd, bool is_listen_fd, server_handle_t *hserver);
-static void _close_flagged_conns(server_handle_t *hserver);
+#include "http.h"
+#include "socket.h"
 
-int server_init(server_handle_t *hserver) {
-    struct in_addr in_addr;
-    if (inet_aton(hserver->config.address, &in_addr) == 0) {
-        errno = EINVAL;
-        return 1;
+socket_handle_t g_hsocket = {0};
+server_clients_t g_active_clients = {0};
+
+http_request_t* _get_client_req(socket_conn_t *conn);
+int _register_client(socket_conn_t *conn, http_request_t **out_req);
+void _deregister_client(socket_conn_t *conn);
+
+void socket_cb(socket_event_t event, void *payload);
+
+int server_init(server_config_t *config) {
+    memcpy(g_hsocket.config.address, config->address, strlen(config->address) + 1);
+    g_hsocket.config.port = config->port;
+    g_hsocket.config.max_conn_count = config->max_conn_count;
+    g_hsocket.config.event_cb = socket_cb;
+
+    int ret;
+    if ((ret = socket_init(&g_hsocket)) != 0) {
+        return ret;
     }
-
-    struct sockaddr_in sock_addr = {.sin_family = AF_INET, .sin_port = htons(hserver->config.port), .sin_addr = {.s_addr = in_addr.s_addr}};
-
-    // Initialize listening socket
-    int listen_fd = socket(PF_INET, SOCK_STREAM, 0);
-    if (listen_fd < 0) {
-        return 1;
-    }
-
-    // Bypass lingering wait time from previous sockets
-    int on = 1;
-    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-
-    // Make sure accept() doesn't block
-    int fd_flags = fcntl(listen_fd, F_GETFL, 0);
-    if (fd_flags < 0) {
-        close(listen_fd);
-        return 1;
-    }
-
-    if (fcntl(listen_fd, F_SETFL, fd_flags | O_NONBLOCK) < 0) return 1;
-
-    // Bind the listening socket to an address
-    int ret = bind(listen_fd, (struct sockaddr *) &sock_addr, sizeof(sock_addr));
-    if (ret < 0) {
-        close(listen_fd);
-        return 1;
-    }
-
-    // Add the listening socket to the connections linked list
-    _add_connection(listen_fd, true, hserver);
-
-    return 0;
 }
 
-int server_listen(server_handle_t *hserver) {
-    int ret = listen(hserver->connections->fd, hserver->config.max_conn_count);
-    if (ret < 0) return 1;
-
-    hserver->config.event_cb(SERVER_EVENT_STARTED, NULL);
-    while (true) _poll_socket(hserver);
-
-    return 0;
+int server_start() {
+    return socket_listen(&g_hsocket);
 }
 
-void server_close_connection(server_conn_t *conn, server_handle_t *hserver) {
-    conn->flags |= SERVER_CONN_FLAG_CLOSING;
-    _close_flagged_conns(hserver);
+http_request_t* _get_client_req(socket_conn_t *conn) {
+    if (g_active_clients.clients == NULL) return NULL;
+    // Check if there is already HTTP request linked to this client connection
+    for (int i = 0; i < g_active_clients.len; i++) {
+        if (g_active_clients.clients[i].conn->fd == conn->fd) {
+            return &g_active_clients.clients[i].req;
+        }
+    }
+    return NULL;
 }
 
-void _poll_socket(server_handle_t *hserver) {
-    fd_set fdset;
-    FD_ZERO(&fdset);
-    int max_fd = 0;
-
-    // Add all connections to the set
-    for (server_conn_t *conn = hserver->connections; conn != NULL; conn = conn->next) {
-        FD_SET(conn->fd, &fdset);
-        if (conn->fd > max_fd) max_fd = conn->fd;
-    }
-
-    // Wait for some network event
-    int ret = select(max_fd + 1, &fdset, NULL, NULL, NULL);
-    if (ret < 0) {
-        perror("server_error");
-        return;
-    }
-
-    // Check which connection are ready to be read
-    for (server_conn_t *conn = hserver->connections; conn != NULL; conn = conn->next) {
-        if (FD_ISSET(conn->fd, &fdset)) conn->flags |= SERVER_CONN_FLAG_READ_READY;
-    }
-
-    for (server_conn_t *conn = hserver->connections; conn != NULL; conn = conn->next) {
-        if ((conn->flags & SERVER_CONN_FLAG_LISTENING) > 0) {
-            // Check for new connections
-            struct sockaddr_in client_addr;
-            socklen_t addr_len = sizeof(client_addr);
-            int conn_fd = accept(conn->fd, (struct sockaddr *)&client_addr, &addr_len);
-            if (conn_fd < 0) continue;
-            _add_connection(conn_fd, false, hserver);
-            hserver->config.event_cb(SERVER_EVENT_CONNECTED, conn);
-        } else if ((conn->flags & SERVER_CONN_FLAG_READ_READY) > 0) {
-            // Read the connection's payload
-            int data_len = read(conn->fd, conn->payload.data, sizeof(conn->payload));
-            if (data_len < 0 && errno == EAGAIN) {
-                // No data yet...
-            } else if (data_len < 0) {
-                conn->flags = SERVER_CONN_FLAG_CLOSING;
-            } else {
-                conn->payload.len = data_len;
-                hserver->config.event_cb(SERVER_EVENT_DATA_RECEIVED, conn);
+int _register_client(socket_conn_t *conn, http_request_t **out_req) {
+    if (g_active_clients.clients != NULL) {
+        // Check if there is already HTTP request linked to this client connection
+        for (int i = 0; i < g_active_clients.len; i++) {
+            if (g_active_clients.clients[i].conn->fd == conn->fd) {
+                *out_req = &g_active_clients.clients[i].req;
+                return 0;
             }
         }
     }
 
-    // Handle connections flagged for closing
-    _close_flagged_conns(hserver);
+    // Create new http request structure for this client connection
+    server_client_t *new_buf = realloc(g_active_clients.clients, (g_active_clients.len + 1) * sizeof(server_client_t));
+    if (new_buf == NULL) return 1;
+    g_active_clients.clients = new_buf;
+    g_active_clients.len++;
+
+    server_client_t new_client = {
+        .conn = conn,
+        .req = {0}
+    };
+    memcpy(g_active_clients.clients + g_active_clients.len - 1, &new_client, sizeof(new_client));
+
+    *out_req = &g_active_clients.clients[g_active_clients.len - 1].req;
+    return 0;
 }
 
-void _add_connection(int fd, bool is_listen_fd, server_handle_t *hserver) {
-    server_conn_t **last_conn = &hserver->connections;
-
-    server_conn_t *new_conn = malloc(sizeof(server_conn_t));
-    new_conn->fd = fd;
-    new_conn->flags = is_listen_fd ? SERVER_CONN_FLAG_LISTENING : 0;
-    new_conn->next = NULL;
-
-    if (*last_conn == NULL) {
-        *last_conn = new_conn;
-    } else {
-        while ((*last_conn)->next != NULL) last_conn = &(*last_conn)->next;
-        (*last_conn)->next = new_conn;
+void _deregister_client(socket_conn_t *conn) {
+    if (g_active_clients.clients == NULL) return;
+    // Check if there is already HTTP request linked to this client connection
+    int target_idx = -1;
+    for (int i = 0; i < g_active_clients.len; i++) {
+        if (g_active_clients.clients[i].conn->fd == conn->fd) {
+            target_idx = i;
+            break;
+        }
     }
+    if (target_idx < 0) return;
+
+    http_req_free(&g_active_clients.clients[target_idx].req);
+    g_active_clients.clients[target_idx].conn = NULL;
+
+    socket_close_connection(conn);
+    g_active_clients.len--;
 }
 
-void _close_flagged_conns(server_handle_t *hserver) {
-    server_conn_t **head = &hserver->connections;
-    while (*head != NULL) {
-        server_conn_t *curr = *head;
-        if ((curr->flags & SERVER_CONN_FLAG_CLOSING) > 0) {
-            hserver->config.event_cb(SERVER_EVENT_DISCONNECTED, NULL);
-            *head = curr->next;
-            close(curr->fd);
-            free(curr);
-        } else {
-            head = &(*head)->next;
+void socket_cb(socket_event_t event, void *payload) {
+    switch (event) {
+        case SOCKET_EVENT_LISTENING:
+            printf("Server started at: %s:%d\n", g_hsocket.config.address, g_hsocket.config.port);
+            break;
+        case SOCKET_EVENT_CONNECTED:
+            printf("New device connected to server!\n");
+            break;
+        case SOCKET_EVENT_DISCONNECTED:
+            printf("Device disconnected from server!\n");
+            break;
+        case SOCKET_EVENT_DATA_RECEIVED: {
+            socket_conn_t *conn = payload;
+            printf("Data received! Length: %lu\n", conn->payload.len);
+
+            http_request_t *req = _get_client_req(conn);
+            if (req == NULL) {
+                if (_register_client(conn, &req) != 0) {
+                    fprintf(stderr, "Failed to register new client!");
+                    return;
+                }
+            }
+
+            int ret = parse_http_req(conn->payload.data, conn->payload.len, req);
+
+            if (ret == 0) {
+                // Request is complete
+                _deregister_client(conn);
+            } else if (ret == 1) {
+                if (errno == EINVAL) {
+                    fprintf(stderr, "Invalid HTTP request!");
+                } else {
+                    perror("http_parse");
+                }
+            } else if (ret == 2) {
+                // More body chunks are expected...
+            }
+
+            break;
         }
     }
 }

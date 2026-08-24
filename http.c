@@ -8,6 +8,8 @@
 #include <string.h>
 #include <sys/errno.h>
 
+static int _append_temp_data(char *data, size_t len, http_request_t *req);
+
 static int _get_http_method(char *str, http_method_t *out);
 static int _get_http_version(char *str, http_version_t *out);
 static int _get_http_header_value(char *name, char **out, http_request_t *req);
@@ -24,18 +26,39 @@ int parse_http_req(char *data, size_t len, http_request_t *req) {
         return 1;
     }
 
-    int offset = 0;
-    char *headers_end = memmem(data, len, "\r\n\r\n", 4);
-    if (headers_end == NULL) {
-        errno = EINVAL;
-        return 1;
+    if ((req->flags & HTTP_REQ_FLAG_HEADERS_COMPLETE) > 0) {
+        // Only request body chunks are expected from now on...
+        if (_has_http_header("Content-Length", req)) {
+            int ret = _extract_fixed_size_body(data, len, req);
+            if (ret != 0) return ret;
+        } else if (_has_http_header("Transfer-Encoding", req)) {
+            int ret = _extract_chunked_body(data, len, req);
+            if (ret != 0) return ret;
+        }
+        return 0;
     }
+
+    int offset = 0;
+
+    // Append the current data to temp buffer
+    _append_temp_data(data, len, req);
+
+    char *headers_end = memmem(req->temp, req->temp_len, "\r\n\r\n", 4);
+    if (headers_end == NULL) {
+        // Request is still incomplete, remove trailing new lines
+        return 2;
+    }
+
+    // Terminate temp buffer
+    char terminator = '\0';
+    _append_temp_data(&terminator, 1, req);
+    req->flags |= HTTP_REQ_FLAG_HEADERS_COMPLETE;
 
     // Extract the headers
     int line_idx = 0;
-    char *startline = data + offset;
+    char *startline = req->temp + offset;
     while (headers_end - startline >= 0) {
-        char *endline = memmem(data + offset, len - offset, "\r\n", 2);
+        char *endline = memmem(req->temp + offset, req->temp_len - offset, "\r\n", 2);
         if (endline == NULL) {
             errno = EINVAL;
             return 1;
@@ -49,26 +72,25 @@ int parse_http_req(char *data, size_t len, http_request_t *req) {
 
         // Account for the 2 ending bytes (\r\n)
         offset += (endline + 2) - startline;
-        startline = data + offset;
+        startline = req->temp + offset;
         line_idx++;
     }
 
     // Extract the body
-    if (req->method != HTTP_GET) {
-        char *body_start = headers_end + 4;     // Account for "\r\n\r\n"
+    char *body_start = headers_end + 4;     // Account for "\r\n\r\n"
+    size_t left = (req->temp + req->temp_len - 1) - body_start;
 
+    // Free the temp memory
+    free(req->temp);
+    req->temp_len = 0;
+
+    if (req->method != HTTP_GET) {
         if (_has_http_header("Content-Length", req)) {
-            _extract_fixed_size_body(body_start, (data + len) - body_start, req);
+            int ret = _extract_fixed_size_body(body_start, left, req);
+            if (ret != 0) return ret;
         } else if (_has_http_header("Transfer-Encoding", req)) {
-            int res = _extract_chunked_body(body_start, (data + len) - body_start, req);
-            if (res == 1) {
-                errno = EINVAL;
-                return 1;
-            }
-            if (res == 2) {
-                // More chunks are expected...
-                return 2;
-            }
+            int ret = _extract_chunked_body(body_start, left, req);
+            if (ret != 0) return ret;
         }
     }
 
@@ -93,6 +115,15 @@ void http_req_free(http_request_t *req) {
     free(req->body);
     free(req->uri);
     memset(req, 0, sizeof(*req));
+}
+
+int _append_temp_data(char *data, size_t len, http_request_t *req) {
+    char *new = realloc(req->temp, req->temp_len + len);
+    if (new == NULL) return 1;
+    req->temp = new;
+
+    memcpy(req->temp + req->temp_len, data, len);
+    req->temp_len += len;
 }
 
 int _get_http_method(char *str, http_method_t *out) {
@@ -186,7 +217,6 @@ int _parse_http_req_header_line(char *start, size_t len, int line_idx, http_requ
 }
 
 int _extract_fixed_size_body(char *start, size_t len, http_request_t *req) {
-    char *body_start = start;
     size_t body_size = 0;
     char *content_length;
     if (_get_http_header_value("Content-Length", &content_length, req) == 0) {
@@ -198,16 +228,36 @@ int _extract_fixed_size_body(char *start, size_t len, http_request_t *req) {
             return 1;
         }
     } else {
-        // Assume the body spans to the end of the request when no "Content-Length" header is found
-        body_size = (start + len) - body_start;
+        // Missing "Content-Length" header
+        errno = EINVAL;
+        return 1;
     }
 
-    req->body = calloc(1, body_size);
-    memcpy(req->body, body_start, body_size);
+    if ((req->flags & HTTP_REQ_FLAG_BODY_INCOMPLETE) == 0) {
+        // First chunk of the body data
+        req->body = calloc(1, body_size);
+        memcpy(req->body, start, len);
+    } else {
+        // Append the new chunk to the body
+        memcpy(req->body + strlen(req->body), start, len);
+    }
+
+    if (strlen(req->body) < body_size) {
+        req->flags |= HTTP_REQ_FLAG_BODY_INCOMPLETE;
+    } else {
+        req->flags &=~ HTTP_REQ_FLAG_BODY_INCOMPLETE;
+    }
+
+    if ((req->flags & HTTP_REQ_FLAG_BODY_INCOMPLETE) > 0) return 2;
+
+    return 0;
 }
 
 int _extract_chunked_body(char *start, size_t len, http_request_t *req) {
     char *endptr;
+
+    // If length is 0, we shall expect more body chunks
+    if (len == 0) return 2;
 
     size_t chunk_size = strtol(start, &endptr, 16);
     if (endptr == start) {
@@ -219,23 +269,21 @@ int _extract_chunked_body(char *start, size_t len, http_request_t *req) {
     // Indicate last chunk
     if (chunk_size == 0) return 0;
 
-    char *chunk_start = memmem(start, len, "\r\n", 2);
+    char *chunk_start = memmem(start, len, "\r\n", 2) + 2;
     if (chunk_start == NULL) return 1;
 
     if (req->body == NULL) {
         req->body = calloc(1, chunk_size);
-        memcpy(req->body, chunk_start + 2, chunk_size);
+        memcpy(req->body, chunk_start, chunk_size);
     } else {
         size_t curr_body_len = strlen(req->body);
         size_t new_body_len = curr_body_len + chunk_size + 1;
-        char *new_body = calloc(1, new_body_len);
-
-        memcpy(new_body, req->body, curr_body_len);
-        memcpy(new_body + curr_body_len, chunk_start, chunk_size);
-        new_body[curr_body_len + chunk_size] = '\0';
-
-        free(req->body);
+        char *new_body = realloc(req->body, new_body_len);
+        if (new_body == NULL) return 1;
         req->body = new_body;
+
+        memcpy(req->body + curr_body_len, chunk_start, chunk_size);
+        req->body[curr_body_len + chunk_size] = '\0';
     }
 
     return 2;
