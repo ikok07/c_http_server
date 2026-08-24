@@ -7,6 +7,7 @@
 
 #include "socket.h"
 #include "http.h"
+#include "time.h"
 
 typedef struct {
     int port;
@@ -17,6 +18,9 @@ typedef struct {
 typedef struct {
     socket_conn_t *conn;
     http_request_t req;
+    // TODO: Implement TTL
+    time_t connected_at;
+    time_t last_activity;
 } server_client_t;
 
 typedef struct {

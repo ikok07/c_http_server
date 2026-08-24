@@ -6,9 +6,17 @@
 #define SOCKETS_TEST_HTTP_H
 #include <stdlib.h>
 
-#define MAX_HEADERS             32
-#define MAX_HEADER_NAME         64
-#define MAX_HEADER_VALUE        256
+#define HTTP_ABSOLUTE_TTL_MS                        (1000 * 60)         // The maximum allowed time for each request to finish
+
+#define HTTP_MAX_HEADER_LEN                         8096                // The header part of the HTTP request cannot exceed this threshold
+#define HTTP_MAX_BODY_LEN                           1024000             // The maximum length of the HTTP request's body
+
+#define HTTP_MAX_HEADERS                            32
+#define HTTP_MAX_HEADER_NAME                        64
+#define HTTP_MAX_HEADER_VALUE                       256
+
+#define HTTP_REQ_FLAG_HEADERS_COMPLETE              (1UL << 0)      // Indicates that the headers part is handled
+#define HTTP_REQ_FLAG_BODY_INCOMPLETE               (1UL << 1)      // Indicates that there is still body data to be received
 
 typedef enum {
     HTTP_GET, HTTP_POST, HTTP_PUT, HTTP_PATCH, HTTP_DELETE, HTTP_OPTIONS
@@ -23,12 +31,9 @@ typedef enum {
 } http_version_t;
 
 typedef struct {
-    char name[MAX_HEADER_NAME];
-    char value[MAX_HEADER_VALUE];
+    char name[HTTP_MAX_HEADER_NAME];
+    char value[HTTP_MAX_HEADER_VALUE];
 } http_header_t;
-
-#define HTTP_REQ_FLAG_HEADERS_COMPLETE              (1UL << 0)      // Indicates that the headers part is handled
-#define HTTP_REQ_FLAG_BODY_INCOMPLETE               (1UL << 1)      // Indicates that there is still body data to be received
 
 typedef struct {
     uint8_t flags;
@@ -37,15 +42,15 @@ typedef struct {
     http_method_t method;
     char *uri;
     http_version_t version;
-    http_header_t headers[MAX_HEADERS];
+    http_header_t headers[HTTP_MAX_HEADERS];
     int header_count;
     char *body;
+    size_t body_len;
 } http_request_t;
 
 // TODO: Add free request method
 
 int parse_http_req(char *data, size_t len, http_request_t *req);
-int parse_http_req_body_chunk(char *data, size_t len, http_request_t *req);
 void http_req_free(http_request_t *req);
 
 #endif //SOCKETS_TEST_HTTP_H

@@ -30,6 +30,8 @@ int server_init(server_config_t *config) {
     if ((ret = socket_init(&g_hsocket)) != 0) {
         return ret;
     }
+
+    return 0;
 }
 
 int server_start() {
@@ -122,11 +124,8 @@ void socket_cb(socket_event_t event, void *payload) {
                 // Request is complete
                 _deregister_client(conn);
             } else if (ret == 1) {
-                if (errno == EINVAL) {
-                    fprintf(stderr, "Invalid HTTP request!");
-                } else {
-                    perror("http_parse");
-                }
+                fprintf(stderr, "Invalid HTTP request!\n");
+                _deregister_client(conn);
             } else if (ret == 2) {
                 // More body chunks are expected...
             }

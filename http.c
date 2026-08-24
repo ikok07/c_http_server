@@ -30,9 +30,11 @@ int parse_http_req(char *data, size_t len, http_request_t *req) {
         // Only request body chunks are expected from now on...
         if (_has_http_header("Content-Length", req)) {
             int ret = _extract_fixed_size_body(data, len, req);
+            if (req->body_len > HTTP_MAX_BODY_LEN) return 1;
             if (ret != 0) return ret;
         } else if (_has_http_header("Transfer-Encoding", req)) {
             int ret = _extract_chunked_body(data, len, req);
+            if (req->body_len > HTTP_MAX_BODY_LEN) return 1;
             if (ret != 0) return ret;
         }
         return 0;
@@ -45,7 +47,8 @@ int parse_http_req(char *data, size_t len, http_request_t *req) {
 
     char *headers_end = memmem(req->temp, req->temp_len, "\r\n\r\n", 4);
     if (headers_end == NULL) {
-        // Request is still incomplete, remove trailing new lines
+        // Request is still incomplete
+        if (req->temp_len > HTTP_MAX_HEADER_LEN) return 1;
         return 2;
     }
 
@@ -59,14 +62,14 @@ int parse_http_req(char *data, size_t len, http_request_t *req) {
     char *startline = req->temp + offset;
     while (headers_end - startline >= 0) {
         char *endline = memmem(req->temp + offset, req->temp_len - offset, "\r\n", 2);
-        if (endline == NULL) {
-            errno = EINVAL;
+        if (endline == NULL) return 1;
+
+        printf("%.*s\n", endline - startline, startline);
+        if (req->header_count > HTTP_MAX_HEADERS) {
             return 1;
         }
 
-        printf("%.*s\n", endline - startline, startline);
         if (_parse_http_req_header_line(startline, endline - startline, line_idx, req) != 0) {
-            errno = EINVAL;
             return 1;
         }
 
@@ -87,25 +90,13 @@ int parse_http_req(char *data, size_t len, http_request_t *req) {
     if (req->method != HTTP_GET) {
         if (_has_http_header("Content-Length", req)) {
             int ret = _extract_fixed_size_body(body_start, left, req);
+            if (req->body_len > HTTP_MAX_BODY_LEN) return 1;
             if (ret != 0) return ret;
         } else if (_has_http_header("Transfer-Encoding", req)) {
             int ret = _extract_chunked_body(body_start, left, req);
+            if (req->body_len > HTTP_MAX_BODY_LEN) return 1;
             if (ret != 0) return ret;
         }
-    }
-
-    return 0;
-}
-
-int parse_http_req_body_chunk(char *data, size_t len, http_request_t *req) {
-    int res = _extract_chunked_body(data, len, req);
-    if (res == 1) {
-        errno = EINVAL;
-        return 1;
-    }
-    if (res == 2) {
-        // More chunks are expected...
-        return 2;
     }
 
     return 0;
@@ -239,10 +230,12 @@ int _extract_fixed_size_body(char *start, size_t len, http_request_t *req) {
         memcpy(req->body, start, len);
     } else {
         // Append the new chunk to the body
-        memcpy(req->body + strlen(req->body), start, len);
+        memcpy(req->body + req->body_len, start, len);
     }
 
-    if (strlen(req->body) < body_size) {
+    req->body_len += len;
+
+    if (req->body_len < body_size) {
         req->flags |= HTTP_REQ_FLAG_BODY_INCOMPLETE;
     } else {
         req->flags &=~ HTTP_REQ_FLAG_BODY_INCOMPLETE;
@@ -276,7 +269,7 @@ int _extract_chunked_body(char *start, size_t len, http_request_t *req) {
         req->body = calloc(1, chunk_size);
         memcpy(req->body, chunk_start, chunk_size);
     } else {
-        size_t curr_body_len = strlen(req->body);
+        size_t curr_body_len = req->body_len;
         size_t new_body_len = curr_body_len + chunk_size + 1;
         char *new_body = realloc(req->body, new_body_len);
         if (new_body == NULL) return 1;
@@ -284,6 +277,7 @@ int _extract_chunked_body(char *start, size_t len, http_request_t *req) {
 
         memcpy(req->body + curr_body_len, chunk_start, chunk_size);
         req->body[curr_body_len + chunk_size] = '\0';
+        req->body_len += chunk_size;
     }
 
     return 2;
