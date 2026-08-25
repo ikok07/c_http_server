@@ -6,6 +6,12 @@
 #define SOCKETS_TEST_SOCKETS_H
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
+
+/* ------ CONFIG ------ */
+#define SOCKET_WAIT_TIMEOUT_SECONDS                 (2)
+#define SOCKET_ABSOLUTE_TTL_SECONDS                 (300)            // The maximum allowed time for each socket connection to be closed
+#define SOCKET_IDLE_TTL_SECONDS                     (30)             // The maximum allowed time for each socket connection to receive some data
 
 /* ----- STATUS FLAGS ------ */
 #define SOCKET_CONN_FLAG_LISTENING                  (1UL << 0)
@@ -16,6 +22,8 @@ typedef enum {
     SOCKET_EVENT_LISTENING,
     SOCKET_EVENT_CONNECTED,
     SOCKET_EVENT_DISCONNECTED,
+    SOCKET_EVENT_TTL_IDLE_EXPIRED,
+    SOCKET_EVENT_TTL_ABS_EXPIRED,
     SOCKET_EVENT_DATA_RECEIVED
 } socket_event_t;
 
@@ -27,10 +35,13 @@ typedef struct {
 } socket_conn_payload_t;
 
 typedef struct socket_conn {
+    struct socket_conn *prev;
     struct socket_conn *next;
     int fd;
     uint8_t flags;
     socket_conn_payload_t payload;
+    time_t connected_at;
+    time_t last_activity;
 } socket_conn_t;
 
 typedef struct {
@@ -42,6 +53,7 @@ typedef struct {
 
 typedef struct {
     socket_conn_t *connections;
+    socket_conn_t *connections_tail;
     socket_config_t config;
 } socket_handle_t;
 

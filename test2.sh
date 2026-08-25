@@ -1,6 +1,6 @@
 (
   # --- FRAGMENTED HEADERS ---
-  printf "POST /post" ; sleep 1
+  printf "POST /post" ; sleep 2
   printf " HTTP/1.1\r" ; sleep 1
   printf "\nHost: local" ; sleep 1
   printf "host:9000\r" ; sleep 1

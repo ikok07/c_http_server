@@ -6,8 +6,6 @@
 #define SOCKETS_TEST_HTTP_H
 #include <stdlib.h>
 
-#define HTTP_ABSOLUTE_TTL_MS                        (1000 * 60)         // The maximum allowed time for each request to finish
-
 #define HTTP_MAX_HEADER_LEN                         8096                // The header part of the HTTP request cannot exceed this threshold
 #define HTTP_MAX_BODY_LEN                           1024000             // The maximum length of the HTTP request's body
 

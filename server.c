@@ -15,7 +15,7 @@ socket_handle_t g_hsocket = {0};
 server_clients_t g_active_clients = {0};
 
 http_request_t* _get_client_req(socket_conn_t *conn);
-int _register_client(socket_conn_t *conn, http_request_t **out_req);
+int _register_client(socket_conn_t *conn);
 void _deregister_client(socket_conn_t *conn);
 
 void socket_cb(socket_event_t event, void *payload);
@@ -49,12 +49,12 @@ http_request_t* _get_client_req(socket_conn_t *conn) {
     return NULL;
 }
 
-int _register_client(socket_conn_t *conn, http_request_t **out_req) {
+int _register_client(socket_conn_t *conn) {
     if (g_active_clients.clients != NULL) {
         // Check if there is already HTTP request linked to this client connection
         for (int i = 0; i < g_active_clients.len; i++) {
             if (g_active_clients.clients[i].conn->fd == conn->fd) {
-                *out_req = &g_active_clients.clients[i].req;
+                // *out_req = &g_active_clients.clients[i].req;
                 return 0;
             }
         }
@@ -72,7 +72,7 @@ int _register_client(socket_conn_t *conn, http_request_t **out_req) {
     };
     memcpy(g_active_clients.clients + g_active_clients.len - 1, &new_client, sizeof(new_client));
 
-    *out_req = &g_active_clients.clients[g_active_clients.len - 1].req;
+    // *out_req = &g_active_clients.clients[g_active_clients.len - 1].req;
     return 0;
 }
 
@@ -98,24 +98,36 @@ void _deregister_client(socket_conn_t *conn) {
 void socket_cb(socket_event_t event, void *payload) {
     switch (event) {
         case SOCKET_EVENT_LISTENING:
-            printf("Server started at: %s:%d\n", g_hsocket.config.address, g_hsocket.config.port);
+            printf("Server listening at: %s:%d\n", g_hsocket.config.address, g_hsocket.config.port);
             break;
-        case SOCKET_EVENT_CONNECTED:
+        case SOCKET_EVENT_CONNECTED: {
+            socket_conn_t *conn = payload;
+            if (_register_client(conn) != 0) {
+                fprintf(stderr, "Failed to register new client!");
+                return;
+            }
+
             printf("New device connected to server!\n");
             break;
+        }
         case SOCKET_EVENT_DISCONNECTED:
             printf("Device disconnected from server!\n");
             break;
+        case SOCKET_EVENT_TTL_IDLE_EXPIRED:
+        case SOCKET_EVENT_TTL_ABS_EXPIRED: {
+            socket_conn_t *conn = payload;
+            printf("Connection expired!\n");
+            _deregister_client(conn);
+            break;
+        }
         case SOCKET_EVENT_DATA_RECEIVED: {
             socket_conn_t *conn = payload;
             printf("Data received! Length: %lu\n", conn->payload.len);
 
             http_request_t *req = _get_client_req(conn);
             if (req == NULL) {
-                if (_register_client(conn, &req) != 0) {
-                    fprintf(stderr, "Failed to register new client!");
-                    return;
-                }
+                fprintf(stderr, "Failed to get client's assigned HTTP request structure!");
+                return;
             }
 
             int ret = parse_http_req(conn->payload.data, conn->payload.len, req);
