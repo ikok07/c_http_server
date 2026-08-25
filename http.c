@@ -8,6 +8,8 @@
 #include <string.h>
 #include <sys/errno.h>
 
+#include "log.h"
+
 static int _append_temp_data(char *data, size_t len, http_request_t *req);
 
 static int _get_http_method(char *str, http_method_t *out);
@@ -64,7 +66,7 @@ int parse_http_req(char *data, size_t len, http_request_t *req) {
         char *endline = memmem(req->temp + offset, req->temp_len - offset, "\r\n", 2);
         if (endline == NULL) return 1;
 
-        printf("%.*s\n", endline - startline, startline);
+        log_debug("%.*s\n", endline - startline, startline);
         if (req->header_count > HTTP_MAX_HEADERS) {
             return 1;
         }
@@ -115,6 +117,7 @@ int _append_temp_data(char *data, size_t len, http_request_t *req) {
 
     memcpy(req->temp + req->temp_len, data, len);
     req->temp_len += len;
+    return 0;
 }
 
 int _get_http_method(char *str, http_method_t *out) {

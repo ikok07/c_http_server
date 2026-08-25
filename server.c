@@ -9,6 +9,7 @@
 #include <sys/errno.h>
 
 #include "http.h"
+#include "log.h"
 #include "socket.h"
 
 socket_handle_t g_hsocket = {0};
@@ -98,35 +99,35 @@ void _deregister_client(socket_conn_t *conn) {
 void socket_cb(socket_event_t event, void *payload) {
     switch (event) {
         case SOCKET_EVENT_LISTENING:
-            printf("Server listening at: %s:%d\n", g_hsocket.config.address, g_hsocket.config.port);
+            log_info("Server listening at: %s:%d\n", g_hsocket.config.address, g_hsocket.config.port);
             break;
         case SOCKET_EVENT_CONNECTED: {
             socket_conn_t *conn = payload;
             if (_register_client(conn) != 0) {
-                fprintf(stderr, "Failed to register new client!");
+                log_error("Failed to register new client!");
                 return;
             }
 
-            printf("New device connected to server!\n");
+            log_debug("New device connected to server!\n");
             break;
         }
         case SOCKET_EVENT_DISCONNECTED:
-            printf("Device disconnected from server!\n");
+            log_debug("Device disconnected from server!\n");
             break;
         case SOCKET_EVENT_TTL_IDLE_EXPIRED:
         case SOCKET_EVENT_TTL_ABS_EXPIRED: {
             socket_conn_t *conn = payload;
-            printf("Connection expired!\n");
+            log_info("Connection expired!\n");
             _deregister_client(conn);
             break;
         }
         case SOCKET_EVENT_DATA_RECEIVED: {
             socket_conn_t *conn = payload;
-            printf("Data received! Length: %lu\n", conn->payload.len);
+            log_debug("Data received! Length: %lu\n", conn->payload.len);
 
             http_request_t *req = _get_client_req(conn);
             if (req == NULL) {
-                fprintf(stderr, "Failed to get client's assigned HTTP request structure!");
+                log_error("Failed to get client's assigned HTTP request structure!");
                 return;
             }
 
@@ -136,7 +137,7 @@ void socket_cb(socket_event_t event, void *payload) {
                 // Request is complete
                 _deregister_client(conn);
             } else if (ret == 1) {
-                fprintf(stderr, "Invalid HTTP request!\n");
+                log_error("Invalid HTTP request!\n");
                 _deregister_client(conn);
             } else if (ret == 2) {
                 // More body chunks are expected...
