@@ -13,6 +13,8 @@
 static int _append_temp_data(char *data, size_t len, http_request_t *req);
 
 static int _get_http_method(char *str, http_method_t *out);
+static int _get_http_resp_status_label(http_status_t status, char *str, size_t len);
+static int _get_http_version_label(http_version_t version, char *str, size_t len);
 static int _get_http_version(char *str, http_version_t *out);
 static int _get_http_header_value(char *name, char **out, http_request_t *req);
 
@@ -22,7 +24,7 @@ static int _parse_http_req_header_line(char *start, size_t len, int line_idx, ht
 static int _extract_fixed_size_body(char *start, size_t len, http_request_t *req);
 static int _extract_chunked_body(char *start, size_t len, http_request_t *req);
 
-int parse_http_req(char *data, size_t len, http_request_t *req) {
+int http_parse_req(char *data, size_t len, http_request_t *req) {
     if (req == NULL) {
         errno = EINVAL;
         return 1;
@@ -110,6 +112,64 @@ void http_req_free(http_request_t *req) {
     memset(req, 0, sizeof(*req));
 }
 
+int http_create_response(http_response_t *resp, char *out, size_t len, size_t *out_len) {
+    size_t offset = 0;
+
+    // Append HTTP version
+    char version[10];
+    int ret = _get_http_version_label(resp->version, version, sizeof(version));
+    if (ret != 0) return 1;
+
+    if (offset + strlen(version) + 1 >= len) return 1;
+    memcpy(out, version, strlen(version));
+    offset += strlen(version);
+    memcpy(out + offset, " ", 1);
+    offset++;
+
+    // Append HTTP response status
+    char status[32];
+    ret = _get_http_resp_status_label(resp->status, status, sizeof(status));
+    if (ret != 0) return 1;
+
+    if (offset + strlen(status) + 1 >= len) return 1;
+    memcpy(out + offset, status, strlen(status));
+    offset += strlen(status);
+    memcpy(out + offset, "\r\n", 2);
+    offset += 2;
+
+    for (int i = 0; i < resp->header_count; i++) {
+        size_t name_len = strlen(resp->headers[i].name);
+        size_t value_len = strlen(resp->headers[i].value);
+
+        // Account for the 4 additional bytes from ": " and "\r\n"
+        if (offset + name_len + value_len + 4 >= len) return 1;
+
+        memcpy(out + offset, resp->headers[i].name, name_len);
+        offset += name_len;
+
+        memcpy(out + offset, ": ", 2);
+        offset += 2;
+
+        memcpy(out + offset, resp->headers[i].value, value_len);
+        offset += value_len;
+
+        memcpy(out + offset, "\r\n", 2);
+        offset += 2;
+    }
+
+    if (offset + 2 >= len) return 1;
+    memcpy(out + offset, "\r\n", 2);
+    offset += 2;
+
+    if (offset + resp->body_len > len) return 1;
+    memcpy(out + offset, resp->body, resp->body_len);
+    offset += resp->body_len;
+
+    *out_len = offset;
+
+    return 0;
+}
+
 int _append_temp_data(char *data, size_t len, http_request_t *req) {
     char *new = realloc(req->temp, req->temp_len + len);
     if (new == NULL) return 1;
@@ -128,6 +188,66 @@ int _get_http_method(char *str, http_method_t *out) {
     else if (memcmp(str, "OPTIONS", 7) == 0) *out = HTTP_OPTIONS;
     else return 1;
 
+    return 0;
+}
+
+int _get_http_resp_status_label(http_status_t status, char *str, size_t len) {
+    char buf[32];
+    switch (status) {
+        case HTTP_OK:
+            strcpy(buf, "200 OK");
+            break;
+        case HTTP_NO_CONTENT:
+            strcpy(buf, "204 No Content");
+            break;
+        case HTTP_BAD_REQUEST:
+            strcpy(buf, "400 Bad Request");
+            break;
+        case HTTP_UNAUTHORIZED:
+            strcpy(buf, "401 Unauthorized");
+            break;
+        case HTTP_FORBIDDEN:
+            strcpy(buf, "403 Forbidden");
+            break;
+        case HTTP_NOT_FOUND:
+            strcpy(buf, "404 Not Found");
+            break;
+        case HTTP_METHOD_NOT_ALLOWED:
+            strcpy(buf, "405 Method Not Allowed");
+            break;
+        default:
+            return 1;
+    }
+
+    size_t required = strlen(buf) + 1;
+    memcpy(str, buf, len > required ? required : len);
+    return 0;
+}
+
+int _get_http_version_label(http_version_t version, char *str, size_t len) {
+    char buf[32];
+    switch (version) {
+        case HTTP_VERSION_09:
+            strcpy(buf, "HTTP/0.9");
+            break;
+        case HTTP_VERSION_10:
+            strcpy(buf, "HTTP/1.0");
+            break;
+        case HTTP_VERSION_11:
+            strcpy(buf, "HTTP/1.1");
+            break;
+        case HTTP_VERSION_20:
+            strcpy(buf, "HTTP/2.0");
+            break;
+        case HTTP_VERSION_30:
+            strcpy(buf, "HTTP/3.0");
+            break;
+        default:
+            return 1;
+    }
+
+    size_t required = strlen(buf) + 1;
+    memcpy(str, buf, len > required ? required : len);
     return 0;
 }
 

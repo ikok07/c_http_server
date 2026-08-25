@@ -73,6 +73,12 @@ int socket_listen(socket_handle_t *hsocket) {
     return 0;
 }
 
+int socket_write(char *data, size_t len, socket_conn_t *conn) {
+    ssize_t sent = send(conn->fd, data, len, 0);
+    if (sent < 0) return 1;
+    return 0;
+}
+
 void socket_close_connection(socket_conn_t *conn) {
     conn->flags |= SOCKET_CONN_FLAG_CLOSING;    // The actual closing happens in the _poll_socket loop
 }

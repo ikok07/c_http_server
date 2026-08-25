@@ -21,6 +21,16 @@ typedef enum {
 } http_method_t;
 
 typedef enum {
+    HTTP_OK                     = 200,
+    HTTP_NO_CONTENT             = 204,
+    HTTP_BAD_REQUEST            = 400,
+    HTTP_UNAUTHORIZED           = 401,
+    HTTP_FORBIDDEN              = 403,
+    HTTP_NOT_FOUND              = 404,
+    HTTP_METHOD_NOT_ALLOWED     = 405
+} http_status_t;
+
+typedef enum {
     HTTP_VERSION_09,
     HTTP_VERSION_10,
     HTTP_VERSION_11,
@@ -46,9 +56,18 @@ typedef struct {
     size_t body_len;
 } http_request_t;
 
-// TODO: Add free request method
+typedef struct {
+    http_status_t status;
+    http_version_t version;
+    http_header_t headers[HTTP_MAX_HEADERS];
+    int header_count;
+    char *body;
+    size_t body_len;
+} http_response_t;
 
-int parse_http_req(char *data, size_t len, http_request_t *req);
+int http_parse_req(char *data, size_t len, http_request_t *req);
 void http_req_free(http_request_t *req);
+
+int http_create_response(http_response_t *resp, char *out, size_t len, size_t *out_len);
 
 #endif //SOCKETS_TEST_HTTP_H

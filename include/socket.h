@@ -72,6 +72,15 @@ int socket_init(socket_handle_t *hsocket);
 int socket_listen(socket_handle_t *hsocket);
 
 /**
+ * @brief Writes data to the specified socket connection
+ * @param data Data to send
+ * @param len Length of the data
+ * @param conn Socket connection
+ * @return 0 - OK; 1 - ERROR
+ */
+int socket_write(char *data, size_t len, socket_conn_t *conn);
+
+/**
  * @brief Closes connection to a client
  * @param conn Connection structure
  */

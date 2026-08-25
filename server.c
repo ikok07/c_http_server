@@ -131,10 +131,34 @@ void socket_cb(socket_event_t event, void *payload) {
                 return;
             }
 
-            int ret = parse_http_req(conn->payload.data, conn->payload.len, req);
+            int ret = http_parse_req(conn->payload.data, conn->payload.len, req);
 
             if (ret == 0) {
                 // Request is complete
+                http_header_t content_length = {
+                    .name = "Content-Length",
+                    .value = "4"
+                };
+
+                char body[] = "test";
+                http_response_t resp = {
+                    .status = HTTP_OK,
+                    .version = req->version,
+                    .header_count = 1,
+                    .body = body,
+                    .body_len = strlen(body)
+                };
+                memcpy(resp.headers, &content_length, sizeof(content_length));
+
+                char resp_str[1024];
+                size_t resp_len;
+                if (http_create_response(&resp, resp_str, sizeof(resp_str), &resp_len) != 0) {
+                    log_error("Failed to create response!");
+                }
+
+                if (socket_write(resp_str, resp_len, conn) != 0) {
+                    log_error("Failed to write to socket!");
+                };
                 _deregister_client(conn);
             } else if (ret == 1) {
                 log_error("Invalid HTTP request!\n");
