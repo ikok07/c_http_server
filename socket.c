@@ -8,12 +8,14 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include <netinet/in.h>
 #include <sys/errno.h>
 #include <fcntl.h>
 #include <arpa/inet.h>
 
 #include "http.h"
+#include "config.h"
 
 static void _poll_socket(socket_handle_t *hsocket);
 static void _check_for_expired_conn(socket_handle_t *hsocket);
@@ -74,8 +76,30 @@ int socket_listen(socket_handle_t *hsocket) {
 }
 
 int socket_write(char *data, size_t len, socket_conn_t *conn) {
-    ssize_t sent = send(conn->fd, data, len, 0);
-    if (sent < 0) return 1;
+    size_t total_sent = 0;
+    while (total_sent < len) {
+        size_t sent = send(conn->fd, data, len, 0);
+        if (sent > 0) {
+            total_sent += sent;
+            continue;
+        }
+
+        if (sent < 0) {
+            if (errno == EINTR) continue;
+            else if (errno == EAGAIN) {
+                // Send buffer is full
+                struct pollfd pfd = {.fd = conn->fd, .events = POLLOUT};
+                int ret = poll(&pfd, 1, SOCKET_WRITE_TIMEOUT_MS);
+                if (ret < 0) {
+                    if (errno == EINTR) continue;
+                    return 1;
+                }
+                continue;
+            }
+            return 1;
+        }
+    }
+
     return 0;
 }
 

@@ -5,13 +5,7 @@
 #ifndef SOCKETS_TEST_HTTP_H
 #define SOCKETS_TEST_HTTP_H
 #include <stdlib.h>
-
-#define HTTP_MAX_HEADER_LEN                         8096                // The header part of the HTTP request cannot exceed this threshold
-#define HTTP_MAX_BODY_LEN                           1024000             // The maximum length of the HTTP request's body
-
-#define HTTP_MAX_HEADERS                            32
-#define HTTP_MAX_HEADER_NAME                        64
-#define HTTP_MAX_HEADER_VALUE                       256
+#include "config.h"
 
 #define HTTP_REQ_FLAG_HEADERS_COMPLETE              (1UL << 0)      // Indicates that the headers part is handled
 #define HTTP_REQ_FLAG_BODY_INCOMPLETE               (1UL << 1)      // Indicates that there is still body data to be received

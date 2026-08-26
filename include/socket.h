@@ -8,11 +8,6 @@
 #include <stdint.h>
 #include <time.h>
 
-/* ------ CONFIG ------ */
-#define SOCKET_WAIT_TIMEOUT_SECONDS                 (2)
-#define SOCKET_ABSOLUTE_TTL_SECONDS                 (300)            // The maximum allowed time for each socket connection to be closed
-#define SOCKET_IDLE_TTL_SECONDS                     (30)             // The maximum allowed time for each socket connection to receive some data
-
 /* ----- STATUS FLAGS ------ */
 #define SOCKET_CONN_FLAG_LISTENING                  (1UL << 0)
 #define SOCKET_CONN_FLAG_READ_READY                 (1UL << 1)

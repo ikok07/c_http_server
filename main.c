@@ -5,10 +5,23 @@
 #include "http.h"
 #include "server.h"
 #include "lib/log/log.h"
+#include "config.h"
 
-#define SERVER_ADDR         "127.0.0.1"
-#define SERVER_PORT         9000
-#define SERVER_MAX_CONNS    128
+static void route_handler_health(server_client_t *client) {
+    char body[] = "Server running normally!";
+
+    server_response_t response = {
+        .status = HTTP_OK,
+        .headers = NULL,
+        .headers_len = 0,
+        .body = body,
+        .body_len = strlen(body),
+        .client = client
+    };
+    if (server_respond(&response) != 0) {
+        log_error("Failed to send HTTP response!");
+    }
+}
 
 int main(void) {
     log_set_level(1);                   // DEBUG level
@@ -29,6 +42,9 @@ int main(void) {
         }
         return 1;
     };
+
+    server_route_register("/", route_handler_health);
+    server_route_register("/health", route_handler_health);
 
     server_start();
     return 0;

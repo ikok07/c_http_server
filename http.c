@@ -9,6 +9,7 @@
 #include <sys/errno.h>
 
 #include "log.h"
+#include "config.h"
 
 static int _append_temp_data(char *data, size_t len, http_request_t *req);
 
